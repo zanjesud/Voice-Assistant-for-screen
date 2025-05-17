@@ -146,7 +146,7 @@ assistant = Assistant(model)
 def audio_callback(recognizer, audio):
     try:
         print("Audio to textprocessing..")
-        prompt = recognizer.recognize_whisper(audio, model="base", language="english")
+        prompt = recognizer.recognize_whisper(audio, model="tiny", language="english")
         assistant.answer(prompt, desktop_screenshot.read(encode=True))
         print("processed audio")
     except UnknownValueError:
