@@ -1,12 +1,14 @@
 import base64
-import pyautogui
-import numpy as np
 from threading import Lock, Thread
+import time
+import numpy  
 import cv2
 import openai
+import threading
+from PIL import ImageGrab
+from cv2 import imencode
 from dotenv import load_dotenv
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.schema.messages import SystemMessage
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.output_parsers import StrOutputParser
@@ -14,13 +16,13 @@ from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_openai import ChatOpenAI
 from pyaudio import PyAudio, paInt16
 from speech_recognition import Microphone, Recognizer, UnknownValueError
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 load_dotenv()
 
-
-class ScreenCapture:
+class DesktopScreenshot:
     def __init__(self):
-        self.frame = None
+        self.screenshot = None
         self.running = False
         self.lock = Lock()
 
@@ -35,24 +37,25 @@ class ScreenCapture:
 
     def update(self):
         while self.running:
-            screenshot = pyautogui.screenshot()
-            frame = np.array(screenshot)
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            screenshot = ImageGrab.grab()
+            screenshot = cv2.cvtColor(numpy.array(screenshot), cv2.COLOR_RGB2BGR)
 
             self.lock.acquire()
-            self.frame = frame
+            self.screenshot = screenshot
             self.lock.release()
+
+            time.sleep(0.2)  
 
     def read(self, encode=False):
         self.lock.acquire()
-        frame = self.frame.copy()
+        screenshot = self.screenshot.copy() if self.screenshot is not None else None
         self.lock.release()
 
-        if encode:
-            _, buffer = cv2.imencode(".jpeg", frame)
+        if encode and screenshot is not None:
+            _, buffer = imencode(".jpeg", screenshot)
             return base64.b64encode(buffer)
 
-        return frame
+        return screenshot
 
     def stop(self):
         self.running = False
@@ -60,7 +63,7 @@ class ScreenCapture:
             self.thread.join()
 
 
-class ScreenAssistant:
+class Assistant:
     def __init__(self, model):
         self.chain = self._create_inference_chain(model)
 
@@ -85,7 +88,7 @@ class ScreenAssistant:
 
         with openai.audio.speech.with_streaming_response.create(
             model="tts-1",
-            voice="alloy",
+            voice="shimmer",
             response_format="pcm",
             input=response,
         ) as stream:
@@ -94,21 +97,13 @@ class ScreenAssistant:
 
     def _create_inference_chain(self, model):
         SYSTEM_PROMPT = """
-        You are a screen observation assistant that helps users understand what's 
-        on their laptop screen. You will receive screenshots and questions about 
-        the screen content. Your job is to:
-        
-        1. Describe visual elements when asked
-        2. Explain text content when requested
-        3. Identify applications/windows visible
-        4. Provide summaries of visible information
-        5. Answer questions about what's displayed
-        
-        Be concise but thorough in your descriptions. Focus on the most relevant 
-        elements based on the user's question. If text is small and unreadable, 
-        say so rather than guessing.
-        
-        For technical content (code, documents, etc.), provide accurate explanations.
+        You are a witty assistant that will use the chat history and the image 
+        provided by the user to answer its questions.
+
+        Use few words on your answers. Go straight to the point. Do not use any
+        emoticons or emojis. Do not ask the user any questions.
+
+        Be friendly and helpful. Show some personality. Do not be too formal.
         """
 
         prompt_template = ChatPromptTemplate.from_messages(
@@ -139,46 +134,55 @@ class ScreenAssistant:
         )
 
 
-# Initialize screen capture
-screen_capture = ScreenCapture().start()
+desktop_screenshot = DesktopScreenshot().start()
 
 # Use Gemini for better image understanding
 model = ChatGoogleGenerativeAI(model="gemini-2.5-flash-preview-04-17")
+#model = ChatOpenAI(model="gpt-4o")
 
-# Alternatively, use GPT-4 with vision capabilities
-# model = ChatOpenAI(model="gpt-4-vision-preview")
-
-assistant = ScreenAssistant(model)
+assistant = Assistant(model)
 
 
 def audio_callback(recognizer, audio):
     try:
+        print("Audio to textprocessing..")
         prompt = recognizer.recognize_whisper(audio, model="base", language="english")
-        assistant.answer(prompt, screen_capture.read(encode=True))
-
+        assistant.answer(prompt, desktop_screenshot.read(encode=True))
+        print("processed audio")
     except UnknownValueError:
-        print("Could not understand audio. Please try again.")
+        print("There was an error processing the audio.")
 
 
 recognizer = Recognizer()
 microphone = Microphone()
 with microphone as source:
     recognizer.adjust_for_ambient_noise(source)
+    recognizer.pause_threshold = 0.5  # Increase if you want to allow longer pauses
 
-stop_listening = recognizer.listen_in_background(microphone, audio_callback)
 
-print("Screen observation assistant is running. Ask questions about your screen.")
-print("Press Ctrl+C to quit.")
+    print("Say something (press Ctrl+C to exit):")
+    try:
+        while True:
+            print("Listening...")
+            audio = recognizer.listen(source)
+            try:
+                prompt = recognizer.recognize_whisper(audio, model="tiny", language="english")
+                assistant.answer(prompt, desktop_screenshot.read(encode=True))
+            except UnknownValueError:
+                print("There was an error processing the audio.")
 
-try:
-    # Show screen preview (optional)
-    while True:
-        cv2.imshow("Screen Preview", screen_capture.read())
-        if cv2.waitKey(1) in [27, ord("q")]:
-            break
-except KeyboardInterrupt:
-    pass
+            # Show the screenshot window as before
+            screenshot = desktop_screenshot.read()
+            if screenshot is not None:
+                cv2.imshow("Desktop", screenshot)
+            key = cv2.waitKey(1)
+            if key in [27, ord("q")]:
+                print("Exiting...")
+                break
+    except KeyboardInterrupt:
+        print("Thank you for using my services....")
 
-screen_capture.stop()
+# Stop background processes before closing windows
+desktop_screenshot.stop()
+time.sleep(0.5)
 cv2.destroyAllWindows()
-stop_listening(wait_for_stop=False)

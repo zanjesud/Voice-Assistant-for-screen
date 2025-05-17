@@ -7,5 +7,5 @@ python-dotenv
 pyaudio
 soundfile
 SpeechRecognition
-pyautogui
+pillow
 SpeechRecognition[whisper-local]
